@@ -115,8 +115,8 @@ end
 
 
 ## key_variable_outcome takes the specific file_writer to returns the actual numeric of N, P, Space and time array
-
-function key_variable_outcome(mymodel,file_name)
+## with time_lim, we can output any N and P data corresponding to this time_limit
+function key_variable_outcome(time_lim,mymodel,file_name)
     space=Array(znodes(mymodel.tracers.N))
     N_timeseries = FieldTimeSeries(file_name, "N")
     P_timeseries = FieldTimeSeries(file_name, "P")
@@ -125,6 +125,14 @@ function key_variable_outcome(mymodel,file_name)
     P_data = parent(P_timeseries.data[:,:,1:size(space)[1],:])
     N_data = dropdims(N_data, dims=(1, 2))
     P_data = dropdims(P_data, dims=(1, 2))
+    
+    @assert time_lim < size(times)[1] "time_lim can not be larger than the simulated time"
+    times=times[times.<time_lim]
+    time_index=size(times)[1]
+
+    N_data=N_data[:, 1:time_index]
+    P_data=P_data[:, 1:time_index]
+
     return N_data,P_data,times,space
 end
 
@@ -169,8 +177,8 @@ end
 
 ## Surface plot
 function surface_plot(N_data,P_data,times,space)
-    N_plot=surface(times, space, N_data ,xlabel="Time", ylabel="Space")
-    P_plot=surface(times, space, P_data ,xlabel="Time", ylabel="Space")
+    N_plot=surface(times, space, N_data ,xlabel="Time", ylabel="Space", title="N Surface Plot")
+    P_plot=surface(times, space, P_data ,xlabel="Time", ylabel="Space", title="P Surface Plot")
 
     plot(N_plot, P_plot, layout=(1, 2),size=(1200, 800))
 end
@@ -224,7 +232,7 @@ end
 
 
 ## Calculate the Growth rate depending on our simulation
-function experiment_growth_rate(file_name)
+function experiment_growth_rate(file_name,k,N̄,P̄)
     ds = NCDataset(file_name, "r")
     times = ds["time"][:]
 
@@ -245,6 +253,7 @@ function experiment_growth_rate(file_name)
 
     print("Growth rate of N is approximately ", linear_fit_N[1], "\n")
     print("Growth rate of P is approximately ", linear_fit_P[1], "\n")
+    print("Largest real part of e-value", find_largest_eigenvalue(1e-4,k,N̄,P̄))
 
 
     plot(times, N′,label="norm(N′)", yscale = :log10, linestyle=:solid,
@@ -278,10 +287,10 @@ function FFT_power(N_data, P_data, times)
     end
     
     yticks_values = 2:2:40
-    N_plot=heatmap(times, mode_values, fft_coeff_N_data[2:41,:], xlabel="Time", ylabel="Modes", title="Power of N",yticks=(yticks_values, string.(yticks_values)))
-    P_plot=heatmap(times, mode_values, fft_coeff_P_data[2:41,:], xlabel="Time", ylabel="Modes", title="Power of P",yticks=(yticks_values, string.(yticks_values)))
+    N_plot=heatmap(times, mode_values, fft_coeff_N_data[2:41,:], xlabel="time", ylabel="Modes", title="Power of N",yticks=(yticks_values, string.(yticks_values)))
+    P_plot=heatmap(times, mode_values, fft_coeff_P_data[2:41,:], xlabel="time", ylabel="Modes", title="Power of P",yticks=(yticks_values, string.(yticks_values)))
 
-    plot(N_plot, P_plot, layout=(1, 2),size=(1200, 500))
+    plot(N_plot, P_plot, layout=(1, 2),size=(1100, 450))
 
 end
     
