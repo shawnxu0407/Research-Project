@@ -361,8 +361,8 @@ function ODE_PDE_system_3D(Nₜ, λ, ν, δ, g, m, d₁, d₂, d₃, k)
            ## Define the Jacobian matrix at equilibrium states
            A=zeros(3,3)
            A=[-ν*Pᵢ/((1+Nᵢ)^2)   -ν*(Nᵢ/(Nᵢ+1))+ m*λ*Pᵢ^(m-1)    δ
-              ν*Pᵢ/((1+Nᵢ)^2)   ν*(Nᵢ/(Nᵢ+1))-g*Zᵢ/((1+Pᵢ)^2)-m*λ*Pᵢ^(m-1)      -g*Pᵢ/(1+Pᵢ)
-              0                 g*Zᵢ/((1+Pᵢ)^2)      -δ]
+              ν*Pᵢ/((1+Nᵢ)^2)   ν*(Nᵢ/(Nᵢ+1))-g*Zᵢ/((1+Pᵢ)^2)-m*λ*Pᵢ^(m-1)  -g*Pᵢ/(1+Pᵢ)
+              0                 g*Zᵢ/((1+Pᵢ)^2)      0]
            ## define the linear approximation matrix for PDE system
            diffusion_vec=[d₁,d₂,d₃]
            diffusion_mat=diagm(0 => -(k^2)*diffusion_vec)
@@ -385,6 +385,9 @@ function ODE_PDE_system_3D(Nₜ, λ, ν, δ, g, m, d₁, d₂, d₃, k)
      end
 return(result)
 end
+
+
+
 
 
 
@@ -498,4 +501,53 @@ function experiment_growth_rate_3D(file_name,total_population, λ, ν, δ, g, m,
 
     plot!(times, best_fit_Z,label="Z best fit", linestyle=:dash, lw=4)
 
+end
+
+
+function plot_pde_eigenvalues_3D(Nₜ, λ, ν, δ, g, m, d₁, d₂, d₃, k_range)
+    eigen_pde_values = []
+    
+    for k in k_range
+        result = ODE_PDE_system_3D(Nₜ, λ, ν, δ, g, m, d₁, d₂, d₃, k)[1]
+        push!(eigen_pde_values, result[2])
+    end
+
+    # Plot max real part of PDE eigenvalue vs k
+    plot(k_range, eigen_pde_values, xlabel="k", ylabel="Max Re(λ)", title="Max Real Part of PDE Eigenvalues vs k", lw=2, label="Max Re(λ)")
+    hline!([0], linestyle=:dash, color=:black, label="")
+end
+
+
+
+
+## Conservation plot over time
+function NPsum_3D(N_data,P_data,Z_data,times,space)
+    ## pre-define a vector to record the total concentration over time of NP sum
+    NP_sum = sum(N_data, dims=1) .+ sum(P_data, dims=1)
+    total_NP_sum = vec(NP_sum)
+    # Plot the row sums against the time vector
+    plot(times, total_NP_sum, xlabel="Time", ylabel="NP sum over time", title="NP sum over time",ylim=(0,250),label="NP sum")
+    Z_sum=sum(Z_data,dims=1)
+    total_Z_sum=vec(Z_sum)
+    plot!(times, total_Z_sum, label="Z sum", legend=:right)
+    
+end
+
+
+## Get the graph of Equilibrium points for N, P and Z for variable total population
+
+
+# Function to plot the equilibrium states
+function plot_equilibrium_3D(N_t, λ, ν, δ, g, m)
+
+    N̄, P̄, Z̄= equilibrium_state_3D(N_t, λ, ν, δ, g, m)
+    computational_sum=N̄+P̄+Z̄
+
+    plot(N_t, N̄, label="N", lw=2)
+    plot!(N_t, P̄, label="P", lw=2)
+    plot!(N_t, Z̄, label="Z", lw=2)
+    plot!(N_t,computational_sum,label="actual sum", linestyle=:dash)
+    xlabel!("total population")
+    ylabel!("Equilibrium Values")
+    title!("Equilibrium Plot")
 end
