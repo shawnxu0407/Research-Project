@@ -1,3 +1,8 @@
+```
+Include all the helper function to run the 2D/3D analysis for biological PDE/ODE Eigenvalues and Simulation 
+```
+
+
 using LinearAlgebra
 using Polynomials
 using Oceananigans
@@ -237,7 +242,7 @@ end
 
 
 ## Calculate the Growth rate depending on our simulation
-function experiment_growth_rate(file_name,N̄,P̄)
+function experiment_growth_rate(file_name, N̄, P̄)
     ds = NCDataset(file_name, "r")
     times = ds["time"][:]
 
@@ -448,9 +453,7 @@ function conservation_plot_3D(N_data,P_data,Z_data,times,space)
 end
 
 
-
-## Calculate the Growth rate depending on our simulation
-function experiment_growth_rate_3D(file_name,total_population, λ, ν, δ, g, m, d₁, d₂, d₃, k)
+function experiment_growth_rate_3D(file_name,total_population, I₁, I₂, I₃, λ, ν, δ, g, m, d₁, d₂, d₃, k)
     ds = NCDataset(file_name, "r")
     times = ds["time"][:]
 
@@ -458,21 +461,25 @@ function experiment_growth_rate_3D(file_name,total_population, λ, ν, δ, g, m,
     N′ = ds["perturbation_N"]
     P′ = ds["perturbation_P"]
     Z′ = ds["perturbation_Z"]
+    time_increment=60/size(times)[1]
 
+    
 
-    I = 100:1000
+    Interval_1=Int(round(I₁[1]/time_increment)):Int(round(I₁[size(I₁)[1]]/time_increment))
+    Interval_2=Int(round(I₂[1]/time_increment)):Int(round(I₂[size(I₂)[1]]/time_increment))
+    Interval_3=Int(round(I₃[1]/time_increment)):Int(round(I₃[size(I₃)[1]]/time_increment))
     
     degree = 1
 
     ## Fit the log of growth with line on time range I for N,P
     
-    linear_fit_N = fit(times[I], log.(N′[I]), degree, var = :t)
+    linear_fit_N = fit(times[Interval_1], log.(N′[Interval_1]), degree, var = :t)
     best_fit_N = @. exp(linear_fit_N[0] + linear_fit_N[1] * times)
     
-    linear_fit_P = fit(times[I], log.(P′[I]), degree, var = :t)
+    linear_fit_P = fit(times[Interval_2], log.(P′[Interval_2]), degree, var = :t)
     best_fit_P = @. exp(linear_fit_P[0] + linear_fit_P[1] * times)
 
-    linear_fit_Z = fit(times[I], log.(Z′[I]), degree, var = :t)
+    linear_fit_Z = fit(times[Interval_3], log.(Z′[Interval_3]), degree, var = :t)
     best_fit_Z = @. exp(linear_fit_Z[0] + linear_fit_Z[1] * times)
 
 
@@ -495,16 +502,16 @@ function experiment_growth_rate_3D(file_name,total_population, λ, ν, δ, g, m,
 
     plot!(times, Z′,label="norm(Z′)", linestyle=:solid, lw=4)#
     
-    plot!(times, best_fit_N,label="N best fit", linestyle=:dash, lw=4)
+    plot!(times[Interval_1], best_fit_N[Interval_1],label="N best fit", linestyle=:dash, lw=6)
     
-    plot!(times, best_fit_P,label="P best fit", linestyle=:dash, lw=4)
+    plot!(times[Interval_2], best_fit_P[Interval_2],label="P best fit", linestyle=:dash, lw=6)
 
-    plot!(times, best_fit_Z,label="Z best fit", linestyle=:dash, lw=4)
+    plot!(times[Interval_3], best_fit_Z[Interval_3],label="Z best fit", linestyle=:dash, lw=6)
 
 end
 
 
-function plot_pde_eigenvalues_3D(Nₜ, λ, ν, δ, g, m, d₁, d₂, d₃, k_range)
+function plot_pde_eigenvalues_3D(Nₜ, λ, ν, δ, g, m, d₁, d₂, d₃, k_range, xlim_range, ylim_range)
     eigen_pde_values = []
     
     for k in k_range
@@ -513,25 +520,21 @@ function plot_pde_eigenvalues_3D(Nₜ, λ, ν, δ, g, m, d₁, d₂, d₃, k_ran
     end
 
     # Plot max real part of PDE eigenvalue vs k
-    plot(k_range, eigen_pde_values, xlabel="k", ylabel="Max Re(λ)", title="Max Real Part of PDE Eigenvalues vs k", lw=2, label="Max Re(λ)")
+    p = plot(
+        k_range,
+        eigen_pde_values,
+        xlabel = "k",
+        ylabel = "Max Re(λ)",
+        title = "Max Real Part of PDE Eigenvalues vs k",
+        lw = 2,
+        label = "Max Re(λ)",
+        ylim = ylim_range,
+        xlim = xlim_range
+    )
     hline!([0], linestyle=:dash, color=:black, label="")
 end
 
 
-
-
-## Conservation plot over time
-function NPsum_3D(N_data,P_data,Z_data,times,space)
-    ## pre-define a vector to record the total concentration over time of NP sum
-    NP_sum = sum(N_data, dims=1) .+ sum(P_data, dims=1)
-    total_NP_sum = vec(NP_sum)
-    # Plot the row sums against the time vector
-    plot(times, total_NP_sum, xlabel="Time", ylabel="NP sum over time", title="NP sum over time",ylim=(0,250),label="NP sum")
-    Z_sum=sum(Z_data,dims=1)
-    total_Z_sum=vec(Z_sum)
-    plot!(times, total_Z_sum, label="Z sum", legend=:right)
-    
-end
 
 
 ## Get the graph of Equilibrium points for N, P and Z for variable total population
@@ -550,4 +553,107 @@ function plot_equilibrium_3D(N_t, λ, ν, δ, g, m)
     xlabel!("total population")
     ylabel!("Equilibrium Values")
     title!("Equilibrium Plot")
+end
+
+
+## E_folding time
+function e_folding_time_3D(data_mat_N, data_mat_P, data_mat_Z, times, space, N̄, P̄, Z̄)
+    
+    time_array_N = Float64[]
+    push!(time_array_N,times[1])
+    perturb_N=maximum(abs.(data_mat_N[:,1].-N̄))
+    
+    for t in 2:size(times)[1]
+        if maximum(abs.(data_mat_N[:,t].-N̄)) >= exp(1)*perturb_N
+           push!(time_array_N,times[t])
+           perturb_N=maximum(abs.(data_mat_N[:,t].-N̄))
+        end
+    end
+
+
+    time_array_P = Float64[]
+    push!(time_array_P,times[1])
+    perturb_P=maximum(abs.(data_mat_P[:,1].-P̄))
+    
+    for t in 2:size(times)[1]
+        if maximum(abs.(data_mat_P[:,t].-P̄)) >= exp(1)*perturb_P
+           push!(time_array_P,times[t])
+           perturb_P=maximum(abs.(data_mat_P[:,t].-P̄))
+        end
+    end
+
+
+    time_array_Z = Float64[]
+    push!(time_array_Z,times[1])
+    perturb_Z=maximum(abs.(data_mat_Z[:,1].-Z̄))
+    
+    for t in 2:size(times)[1]
+        if maximum(abs.(data_mat_Z[:,t].-Z̄)) >= exp(1)*perturb_Z
+           push!(time_array_Z,times[t])
+           perturb_P=maximum(abs.(data_mat_Z[:,t].-Z̄))
+        end
+    end
+
+    time_array_N=diff(time_array_N)
+    time_array_P=diff(time_array_P)
+    time_array_Z=diff(time_array_Z)
+
+    time_axis_N=range(0, stop=length(time_array_N), length=length(time_array_N))
+    time_axis_P=range(0, stop=length(time_array_P), length=length(time_array_P))
+    time_axis_Z=range(0, stop=length(time_array_Z), length=length(time_array_Z))
+
+    e_folding_N=1 ./time_array_N
+    e_folding_P=1 ./time_array_P
+    e_folding_Z=1 ./time_array_Z
+    
+    myplot_N = scatter(time_axis_N, e_folding_N, xlabel="Time", ylabel="Growth Rate", title="E-folding N", label="N", legend=:bottomright, color=:blue)
+    plot!(myplot_N, time_axis_N, e_folding_N, label="", line=:solid, color=:blue)
+    ylims!(0, maximum(e_folding_N)+0.1)
+    
+    myplot_P = scatter(time_axis_P, e_folding_P, xlabel="Time", ylabel="Growth Rate", title="E-folding P", label="P", legend=:bottomright, color=:blue)
+    plot!(myplot_P, time_axis_P, e_folding_P, label="", line=:solid, color=:red)
+    ylims!(0, maximum(e_folding_P)+0.1)
+
+    myplot_Z = scatter(time_axis_Z, e_folding_Z, xlabel="Time", ylabel="Growth Rate", title="E-folding Z", label="Z", legend=:bottomright, color=:blue)
+    plot!(myplot_Z, time_axis_Z, e_folding_Z, label="", line=:solid, color=:red)
+    ylims!(0, maximum(e_folding_Z)+0.1)
+
+    
+    return e_folding_N,e_folding_P,e_folding_Z,myplot_N,myplot_P,myplot_Z
+end
+
+
+
+
+## Heatmap for power of each mode
+function FFT_power_3D(N_data, P_data, Z_data, times)
+    mode_values = (1:41 .- 1) / 2
+
+    rev_N_data=reverse(N_data, dims=1)
+    N_data_mat=vcat(rev_N_data, N_data)
+    fft_coeff_N_data=zeros(size(N_data_mat))
+
+
+    rev_P_data=reverse(P_data, dims=1)
+    P_data_mat=vcat(rev_P_data, P_data)
+    fft_coeff_P_data=zeros(size(P_data_mat))
+
+
+    rev_Z_data=reverse(Z_data, dims=1)
+    Z_data_mat=vcat(rev_Z_data, Z_data)
+    fft_coeff_Z_data=zeros(size(Z_data_mat))
+
+    for i in 1:size(P_data_mat)[2]
+        fft_coeff_P_data[:,i]=abs.( fft(P_data_mat[:,i]) )/ mean(abs.(fft(P_data_mat[:, i])))
+        fft_coeff_N_data[:,i]=abs.( fft(N_data_mat[:,i]) )/ mean(abs.(fft(N_data_mat[:, i])))
+        fft_coeff_Z_data[:,i]=abs.( fft(Z_data_mat[:,i]) )/ mean(abs.(fft(Z_data_mat[:, i])))
+    end
+    
+    yticks_values = 2:2:40
+    N_plot=heatmap(times, mode_values, sqrt.(fft_coeff_N_data[2:41,:]), xlabel="time", ylabel="Modes", title="Power of N", yticks=(yticks_values, string.(yticks_values)))
+    P_plot=heatmap(times, mode_values, sqrt.(fft_coeff_P_data[2:41,:]), xlabel="time", ylabel="Modes", title="Power of P", yticks=(yticks_values, string.(yticks_values)))
+    Z_plot=heatmap(times, mode_values, sqrt.(fft_coeff_Z_data[2:41,:]), xlabel="time", ylabel="Modes", title="Power of Z", yticks=(yticks_values, string.(yticks_values)))
+
+    plot(N_plot, P_plot, Z_plot, layout=(3,1),size=(800, 1800))
+
 end
