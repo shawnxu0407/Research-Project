@@ -14,6 +14,7 @@ using NCDatasets
 using FFTW
 using Polynomials: fit
 using MeshGrid
+using Peaks
 
 ```
 This First chunk of until functions are for the 2D system simulation
@@ -382,8 +383,9 @@ function ODE_PDE_system_3D(Nₜ, λ, ν, δ, g, m, d₁, d₂, d₃, k)
            key_eigen_ode = maximum(real(eigen_ode))
            ## define the eigenvector corresponding to the largest eigenvalue
            eigen_vec=(eigen(pde_mat).vectors)[:,max_index]
+           eigen_val=(eigen(pde_mat).values)[max_index]
            
-           key=[key_eigen_ode, key_eigen_pde, Nₜ[i], eigen_vec]
+           key=[key_eigen_ode, key_eigen_pde, Nₜ[i], eigen_vec, eigen_val]
            
          end
          push!(result,key)
@@ -451,8 +453,6 @@ function conservation_plot_3D(N_data,P_data,Z_data,times,space)
     # Plot the row sums against the time vector
     plot(times, total_con_vector, xlabel="Time", ylabel="sum con over time", title="total concentration over time",ylim=(255,260),label="total population")
 end
-
-
 function experiment_growth_rate_3D(file_name,total_population, I₁, I₂, I₃, λ, ν, δ, g, m, d₁, d₂, d₃, k)
     ds = NCDataset(file_name, "r")
     times = ds["time"][:]
@@ -461,34 +461,42 @@ function experiment_growth_rate_3D(file_name,total_population, I₁, I₂, I₃,
     N′ = ds["perturbation_N"]
     P′ = ds["perturbation_P"]
     Z′ = ds["perturbation_Z"]
-    time_increment=60/size(times)[1]
+    time_increment=170/size(times)[1]
 
     
 
     Interval_1=Int(round(I₁[1]/time_increment)):Int(round(I₁[size(I₁)[1]]/time_increment))
     Interval_2=Int(round(I₂[1]/time_increment)):Int(round(I₂[size(I₂)[1]]/time_increment))
     Interval_3=Int(round(I₃[1]/time_increment)):Int(round(I₃[size(I₃)[1]]/time_increment))
+
+
+    target_N=N′[Interval_1]
+    N_peaks=findmaxima(target_N)
+    target_P=P′[Interval_2]
+    P_peaks=findmaxima(target_P)
+    target_Z=Z′[Interval_3]
+    Z_peaks=findmaxima(target_Z)
     
     degree = 1
 
     ## Fit the log of growth with line on time range I for N,P
     
-    linear_fit_N = fit(times[Interval_1], log.(N′[Interval_1]), degree, var = :t)
+    linear_fit_N = fit(times[Interval_1][N_peaks.indices], log.(N′[Interval_1][N_peaks.indices]), degree, var = :t)
     best_fit_N = @. exp(linear_fit_N[0] + linear_fit_N[1] * times)
     
-    linear_fit_P = fit(times[Interval_2], log.(P′[Interval_2]), degree, var = :t)
+    linear_fit_P = fit(times[Interval_2][P_peaks.indices], log.(P′[Interval_2][P_peaks.indices]), degree, var = :t)
     best_fit_P = @. exp(linear_fit_P[0] + linear_fit_P[1] * times)
 
-    linear_fit_Z = fit(times[Interval_3], log.(Z′[Interval_3]), degree, var = :t)
+    linear_fit_Z = fit(times[Interval_3][Z_peaks.indices], log.(Z′[Interval_3][Z_peaks.indices]), degree, var = :t)
     best_fit_Z = @. exp(linear_fit_Z[0] + linear_fit_Z[1] * times)
 
 
 
     # ODE_PDE_system_3D(total_population, λ, ν, δ, g, m, d₁, d₂, d₃, k)[1][2]
 
-    print("Growth rate of N is approximately ", linear_fit_N[1], "\n")
-    print("Growth rate of P is approximately ", linear_fit_P[1], "\n")
-    print("Growth rate of Z is approximately ", linear_fit_Z[1], "\n")
+    print("Growth rate of N is approximately ", linear_fit_N[1]," with oscilation period ", 2*mean(diff(times[Interval_1][N_peaks.indices])) , "\n")
+    print("Growth rate of P is approximately ", linear_fit_P[1]," with oscilation period ", 2*mean(diff(times[Interval_2][P_peaks.indices])) , "\n")
+    print("Growth rate of Z is approximately ", linear_fit_Z[1]," with oscilation period ", 2*mean(diff(times[Interval_3][Z_peaks.indices])) , "\n")
     print("Largest real part of e-value ", ODE_PDE_system_3D(total_population, λ, ν, δ, g, m, d₁, d₂, d₃, k)[1][2])
 
     
@@ -509,7 +517,6 @@ function experiment_growth_rate_3D(file_name,total_population, I₁, I₂, I₃,
     plot!(times[Interval_3], best_fit_Z[Interval_3],label="Z best fit", linestyle=:dash, lw=6)
 
 end
-
 
 function plot_pde_eigenvalues_3D(Nₜ, λ, ν, δ, g, m, d₁, d₂, d₃, k_range, xlim_range, ylim_range)
     eigen_pde_values = []
@@ -626,34 +633,39 @@ end
 
 
 ## Heatmap for power of each mode
-function FFT_power_3D(N_data, P_data, Z_data, times)
+function FFT_power_3D(N_data, P_data, Z_data, N̄, P̄, Z̄, times)
+
+    perturbation_N = N_data .- N̄
+    perturbation_P = P_data .- P̄
+    perturbation_Z = Z_data .- Z̄
+
     mode_values = (1:41 .- 1) / 2
 
-    rev_N_data=reverse(N_data, dims=1)
-    N_data_mat=vcat(rev_N_data, N_data)
+    rev_N_data=reverse(perturbation_N, dims=1)
+    N_data_mat=vcat(rev_N_data, perturbation_N)
     fft_coeff_N_data=zeros(size(N_data_mat))
 
 
-    rev_P_data=reverse(P_data, dims=1)
-    P_data_mat=vcat(rev_P_data, P_data)
+    rev_P_data=reverse(perturbation_P, dims=1)
+    P_data_mat=vcat(rev_P_data, perturbation_P)
     fft_coeff_P_data=zeros(size(P_data_mat))
 
 
-    rev_Z_data=reverse(Z_data, dims=1)
-    Z_data_mat=vcat(rev_Z_data, Z_data)
+    rev_Z_data=reverse(perturbation_Z, dims=1)
+    Z_data_mat=vcat(rev_Z_data, perturbation_Z)
     fft_coeff_Z_data=zeros(size(Z_data_mat))
 
     for i in 1:size(P_data_mat)[2]
-        fft_coeff_P_data[:,i]=abs.( fft(P_data_mat[:,i]) )/ mean(abs.(fft(P_data_mat[:, i])))
-        fft_coeff_N_data[:,i]=abs.( fft(N_data_mat[:,i]) )/ mean(abs.(fft(N_data_mat[:, i])))
-        fft_coeff_Z_data[:,i]=abs.( fft(Z_data_mat[:,i]) )/ mean(abs.(fft(Z_data_mat[:, i])))
+        fft_coeff_P_data[:,i]=abs.( fft(P_data_mat[:,i]) )
+        fft_coeff_N_data[:,i]=abs.( fft(N_data_mat[:,i]) )
+        fft_coeff_Z_data[:,i]=abs.( fft(Z_data_mat[:,i]) )
     end
     
     yticks_values = 2:2:40
-    N_plot=heatmap(times, mode_values, sqrt.(fft_coeff_N_data[2:41,:]), xlabel="time", ylabel="Modes", title="Power of N", yticks=(yticks_values, string.(yticks_values)))
-    P_plot=heatmap(times, mode_values, sqrt.(fft_coeff_P_data[2:41,:]), xlabel="time", ylabel="Modes", title="Power of P", yticks=(yticks_values, string.(yticks_values)))
-    Z_plot=heatmap(times, mode_values, sqrt.(fft_coeff_Z_data[2:41,:]), xlabel="time", ylabel="Modes", title="Power of Z", yticks=(yticks_values, string.(yticks_values)))
+    N_plot=heatmap(times, mode_values, fft_coeff_N_data[2:41,:], xlabel="time", ylabel="Modes", title="Power of N", yticks=(yticks_values, string.(yticks_values)))
+    P_plot=heatmap(times, mode_values, fft_coeff_P_data[2:41,:], xlabel="time", ylabel="Modes", title="Power of P", yticks=(yticks_values, string.(yticks_values)))
+    Z_plot=heatmap(times, mode_values, fft_coeff_Z_data[2:41,:], xlabel="time", ylabel="Modes", title="Power of Z", yticks=(yticks_values, string.(yticks_values)))
 
-    plot(N_plot, P_plot, Z_plot, layout=(3,1),size=(800, 1800))
+    plot(N_plot, P_plot, Z_plot, layout=(1,3),size=(1800, 600))
 
 end
