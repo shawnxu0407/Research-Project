@@ -453,6 +453,8 @@ function conservation_plot_3D(N_data,P_data,Z_data,times,space)
     # Plot the row sums against the time vector
     plot(times, total_con_vector, xlabel="Time", ylabel="sum con over time", title="total concentration over time",ylim=(255,260),label="total population")
 end
+
+
 function experiment_growth_rate_3D(file_name,total_population, I₁, I₂, I₃, λ, ν, δ, g, m, d₁, d₂, d₃, k)
     ds = NCDataset(file_name, "r")
     times = ds["time"][:]
@@ -667,5 +669,321 @@ function FFT_power_3D(N_data, P_data, Z_data, N̄, P̄, Z̄, times)
     Z_plot=heatmap(times, mode_values, fft_coeff_Z_data[2:41,:], xlabel="time", ylabel="Modes", title="Power of Z", yticks=(yticks_values, string.(yticks_values)))
 
     plot(N_plot, P_plot, Z_plot, layout=(1,3),size=(1800, 600))
+
+end
+
+
+
+```
+untility functions of the 4-Species Model Here-----------------------------------
+
+```
+
+
+
+function equilibrium_state_4D(N_t, λ, ν, δ, α, g, m)
+    ## record the length of vector N_t
+    num_pt=length(N_t)
+    # Pre-define the vector P_star and N_star as vector to store the equilibrium values for each N_t[i]
+    P̄, N̄, Z̄, D̄=zeros(Float64,num_pt), zeros(Float64,num_pt), zeros(Float64,num_pt), zeros(Float64,num_pt)
+
+    # running the for loop for every N_t
+    for i in 1:num_pt
+        
+       b=1+ (ν+δ)/(g-δ) - (λ/δ)*(δ/(g-δ))^m - N_t[i] + (ν/α)*(δ)/(g-δ)
+       c=  δ/(g-δ) - (λ/δ)*(δ/(g-δ))^m -N_t[i]
+
+       poly_i = Polynomial([c, b, 1])
+       ## Only consider the real roots of above polynomial for solving N
+       all_roots = roots(poly_i)
+       real_roots = filter(x -> isreal(x), all_roots)
+       real_roots = Float64.(real(real_roots))
+
+       ## if there is no such real roots in the restricted range [0,N_t[i]], we use -1 to denote N and P
+       if isempty(filter(x -> 0 <= x <= N_t[i], real_roots))
+           N̄[i] = -1
+           P̄[i] = -1
+           D̄[i] = -1
+           Z̄[i] = -1
+       else
+           N̄[i] = filter(x -> 0 <= x <= N_t[i], real_roots)[1]
+           P̄[i] = δ/(g-δ)
+           D̄[i] = (ν/α)*(δ)/(g-δ) * N̄[i]/(1+N̄[i])
+           Z̄[i] = N_t[i] - N̄[i] - P̄[i] - D̄[i]
+       end
+       
+       ## make a double check that all N P Z are in the range of [0, N_t]
+       if !(0 <= N̄[i] <= N_t[i] && 0 <= P̄[i] <= N_t[i] && 0 <= Z̄[i] <= N_t[i] && 0 <= D̄[i] <= N_t[i])
+        N̄[i], P̄[i], Z̄[i] = -1, -1, -1
+       end
+   end
+   
+   return(N̄,P̄,Z̄,D̄)
+end
+
+
+function ODE_PDE_system_4D(Nₜ, λ, ν, δ, α, g, m, d₁, d₂, d₃, d₄, k)
+    N̄,P̄,Z̄,D̄=equilibrium_state_4D(Nₜ, λ, ν, δ, α, g, m)
+    result=[]
+    for i in 1:length(Nₜ)
+        Nᵢ,Pᵢ,Zᵢ, Dᵢ=N̄[i],P̄[i],Z̄[i],D̄[i]
+        if Nᵢ == -1 && Pᵢ==-1 && Zᵢ==-1 && Dᵢ==-1
+           key=[-0.1, -0.1, -0.1, Nₜ[i]]
+        else
+           ## Define the Jacobian matrix at equilibrium states
+           A=zeros(4,4)
+           A=[-ν*Pᵢ/((1+Nᵢ)^2)   -ν*(Nᵢ/(Nᵢ+1))    0      α
+              ν*Pᵢ/((1+Nᵢ)^2)    ν*(Nᵢ/(Nᵢ+1))-g*Zᵢ/((1+Pᵢ)^2)-m*λ*Pᵢ^(m-1)  -g*Pᵢ/(1+Pᵢ)    0
+              0                  g*Zᵢ/((1+Pᵢ)^2)    0     0
+              0                  m*λ*Pᵢ^(m-1)       δ     -α]
+           ## define the linear approximation matrix for PDE system
+           diffusion_vec=[d₁,d₂,d₃,d₄]
+           diffusion_mat=diagm(0 => -(k^2)*diffusion_vec)
+           pde_mat=A+diffusion_mat
+           ode_mat=A
+           eigen_pde=eigen(pde_mat).values
+           ## define the maximum of real part of eigenvalue
+           key_eigen_pde = maximum(real(eigen_pde))
+           max_index= argmax(real(eigen_pde))
+
+           eigen_ode=eigen(ode_mat).values
+           key_eigen_ode = maximum(real(eigen_ode))
+           ## define the eigenvector corresponding to the largest eigenvalue
+           eigen_vec=(eigen(pde_mat).vectors)[:,max_index]
+           eigen_val=(eigen(pde_mat).values)[max_index]
+           
+           key=[key_eigen_ode, key_eigen_pde, Nₜ[i], eigen_vec, eigen_val]
+           
+         end
+         push!(result,key)
+     end
+return(result)
+end
+
+
+
+function plot_pde_eigenvalues_4D(Nₜ, λ, ν, δ, α, g, m, d₁, d₂, d₃, d₄, k_range, xlim_range, ylim_range)
+    eigen_pde_values = []
+    
+    for k in k_range
+        result = ODE_PDE_system_4D(Nₜ, λ, ν, δ, α, g, m, d₁, d₂, d₃, d₄, k)[1]
+        push!(eigen_pde_values, result[2])
+    end
+
+    # Plot max real part of PDE eigenvalue vs k
+    p = plot(
+        k_range,
+        eigen_pde_values,
+        xlabel = "k",
+        ylabel = "Max Re(λ)",
+        title = "Max Real Part of PDE Eigenvalues vs k",
+        lw = 2,
+        label = "Max Re(λ)",
+        ylim = ylim_range,
+        xlim = xlim_range
+    )
+    hline!([0], linestyle=:dash, color=:black, label="")
+end
+
+
+
+function Jacobian_simplication(Nₜ, λ, ν, δ, α, g, m, d₁, d₂, d₃, d₄, k)
+    N̄,P̄,Z̄,D̄=equilibrium_state_4D(Nₜ, λ, ν, δ, α, g, m)
+    result=[]
+    for i in 1:length(Nₜ)
+        Nᵢ,Pᵢ,Zᵢ, Dᵢ=N̄[i],P̄[i],Z̄[i],D̄[i]
+        if Nᵢ == -1 && Pᵢ==-1 && Zᵢ==-1 && Dᵢ==-1
+           key=[-0.1, -0.1, -0.1, Nₜ[i]]
+        else
+           ## Define the Jacobian matrix at equilibrium states
+           J=zeros(4,4)
+           J=[-ν*Pᵢ/((1+Nᵢ)^2)   -ν*(Nᵢ/(Nᵢ+1))    0      α
+              ν*Pᵢ/((1+Nᵢ)^2)    ν*(Nᵢ/(Nᵢ+1))-g*Zᵢ/((1+Pᵢ)^2)-m*λ*Pᵢ^(m-1)  -g*Pᵢ/(1+Pᵢ)    0
+              0                  g*Zᵢ/((1+Pᵢ)^2)    0     0
+              0                  m*λ*Pᵢ^(m-1)       δ     -α]
+           ## define the linear approximation matrix for PDE system
+           A=ν*Pᵢ/((1+Nᵢ)^2)
+           B=ν*(Nᵢ/(Nᵢ+1))
+           C=m*λ*Pᵢ^(m-1) 
+           D=g*Zᵢ/((1+Pᵢ)^2)
+           E=α
+           F=δ
+           G=g*Pᵢ/(1+Pᵢ)
+
+           
+           key=["A: $(A)", "B: $(B)", "C: $(C)", "D: $(D)", "E: $(E)", "F: $(F)", "G: $(G)", Nₜ[i]]
+           
+         end
+         push!(result,key)
+     end
+return(result)
+end
+
+
+
+function key_variable_outcome_4D(time_lim, mymodel, file_name)
+    space=Array(znodes(mymodel.tracers.N))
+    N_timeseries = FieldTimeSeries(file_name, "N")
+    P_timeseries = FieldTimeSeries(file_name, "P")
+    Z_timeseries = FieldTimeSeries(file_name, "Z")
+    D_timeseries = FieldTimeSeries(file_name, "D")
+    times=Array(N_timeseries.times)
+
+    N_data = parent(N_timeseries.data[:,:,1:size(space)[1],:])
+    P_data = parent(P_timeseries.data[:,:,1:size(space)[1],:])
+    Z_data = parent(Z_timeseries.data[:,:,1:size(space)[1],:])
+    D_data = parent(D_timeseries.data[:,:,1:size(space)[1],:])
+    N_data = dropdims(N_data, dims=(1, 2))
+    P_data = dropdims(P_data, dims=(1, 2))
+    Z_data = dropdims(Z_data, dims=(1, 2))
+    D_data = dropdims(D_data, dims=(1, 2))
+    
+    @assert time_lim <= times[length(times)] "time_lim can not be larger than the simulated time"
+    times=times[times.<time_lim]
+    time_index=size(times)[1]
+
+    N_data=N_data[:, 1:time_index]
+    P_data=P_data[:, 1:time_index]
+    Z_data=Z_data[:, 1:time_index]
+    D_data=D_data[:, 1:time_index]
+
+    return N_data,P_data,Z_data,D_data,times,space
+end
+
+
+
+## Surface plot
+function surface_plot_4D(N_data,P_data,Z_data,D_data,times,space)
+    N_plot=surface(times, space, N_data ,xlabel="Time", ylabel="Space", title="N Surface Plot")
+    P_plot=surface(times, space, P_data ,xlabel="Time", ylabel="Space", title="P Surface Plot")
+    Z_plot=surface(times, space, Z_data ,xlabel="Time", ylabel="Space", title="Z Surface Plot")
+    D_plot=surface(times, space, D_data ,xlabel="Time", ylabel="Space", title="D Surface Plot")
+
+    plot(N_plot, P_plot, Z_plot, D_plot, layout=(4,1),size=(1200, 1100))
+end
+
+
+
+function experiment_growth_rate_4D(file_name,total_population, I₁, I₂, I₃, I₄, λ, ν, δ, g, m, d₁, d₂, d₃, d₄, k)
+    ds = NCDataset(file_name, "r")
+    times = ds["time"][:]
+
+    ## Denote the perturbation for N and P from the equilibrium state
+    N′ = ds["perturbation_N"]
+    P′ = ds["perturbation_P"]
+    Z′ = ds["perturbation_Z"]
+    D′ = ds["perturbation_D"]
+    time_increment=170/size(times)[1]
+
+    
+
+    Interval_1=Int(round(I₁[1]/time_increment)):Int(round(I₁[size(I₁)[1]]/time_increment))
+    Interval_2=Int(round(I₂[1]/time_increment)):Int(round(I₂[size(I₂)[1]]/time_increment))
+    Interval_3=Int(round(I₃[1]/time_increment)):Int(round(I₃[size(I₃)[1]]/time_increment))
+    Interval_4=Int(round(I₄[1]/time_increment)):Int(round(I₄[size(I₄)[1]]/time_increment))
+
+
+    target_N=N′[Interval_1]
+    N_peaks=findmaxima(target_N)
+    target_P=P′[Interval_2]
+    P_peaks=findmaxima(target_P)
+    target_Z=Z′[Interval_3]
+    Z_peaks=findmaxima(target_Z)
+    target_D=D′[Interval_4]
+    D_peaks=findmaxima(target_D)
+    
+    degree = 1
+
+    ## Fit the log of growth with line on time range I for N,P
+    
+    linear_fit_N = fit(times[Interval_1][N_peaks.indices], log.(N′[Interval_1][N_peaks.indices]), degree, var = :t)
+    best_fit_N = @. exp(linear_fit_N[0] + linear_fit_N[1] * times)
+    
+    linear_fit_P = fit(times[Interval_2][P_peaks.indices], log.(P′[Interval_2][P_peaks.indices]), degree, var = :t)
+    best_fit_P = @. exp(linear_fit_P[0] + linear_fit_P[1] * times)
+
+    linear_fit_Z = fit(times[Interval_3][Z_peaks.indices], log.(Z′[Interval_3][Z_peaks.indices]), degree, var = :t)
+    best_fit_Z = @. exp(linear_fit_Z[0] + linear_fit_Z[1] * times)
+
+    linear_fit_D = fit(times[Interval_4][D_peaks.indices], log.(D′[Interval_4][D_peaks.indices]), degree, var = :t)
+    best_fit_D = @. exp(linear_fit_D[0] + linear_fit_D[1] * times)
+
+
+
+
+    # ODE_PDE_system_3D(total_population, λ, ν, δ, g, m, d₁, d₂, d₃, k)[1][2]
+
+    print("Growth rate of N is approximately ", linear_fit_N[1]," with oscilation period ", 2*mean(diff(times[Interval_1][N_peaks.indices])) , "\n")
+    print("Growth rate of P is approximately ", linear_fit_P[1]," with oscilation period ", 2*mean(diff(times[Interval_2][P_peaks.indices])) , "\n")
+    print("Growth rate of Z is approximately ", linear_fit_Z[1]," with oscilation period ", 2*mean(diff(times[Interval_3][Z_peaks.indices])) , "\n")
+    print("Growth rate of D is approximately ", linear_fit_D[1]," with oscilation period ", 2*mean(diff(times[Interval_4][D_peaks.indices])) , "\n")
+    print("Largest real part of e-value ", ODE_PDE_system_4D(total_population, λ, ν, δ, α, g, m, d₁, d₂, d₃, d₄, k)[1][2])
+
+    
+    ϵ = 1e-10
+
+    plot(times, N′,label="norm(N′)", yscale = :log10, linestyle=:solid,
+    lw=4, xlabel="time", ylabel="norm",title="Norm of perturbations", legend=:topleft)
+
+
+    plot!(times, P′,label="norm(P′)", linestyle=:solid, lw=4)#
+
+    plot!(times, Z′,label="norm(Z′)", linestyle=:solid, lw=4)#
+
+    plot!(times, D′.+ϵ,label="norm(D′)", linestyle=:solid, lw=4)#
+    
+    plot!(times[Interval_1], best_fit_N[Interval_1],label="N best fit", linestyle=:dash, lw=6)
+    
+    plot!(times[Interval_2], best_fit_P[Interval_2],label="P best fit", linestyle=:dash, lw=6)
+
+    plot!(times[Interval_3], best_fit_Z[Interval_3],label="Z best fit", linestyle=:dash, lw=6)
+
+    plot!(times[Interval_4], best_fit_D[Interval_4].+ϵ,label="D best fit", linestyle=:dash, lw=6)
+
+end
+
+
+
+function FFT_power_4D(N_data, P_data, Z_data, D_data, N̄, P̄, Z̄, D̄, times)
+
+    perturbation_N = N_data .- N̄
+    perturbation_P = P_data .- P̄
+    perturbation_Z = Z_data .- Z̄
+    perturbation_D = D_data .- D̄
+
+    mode_values = (1:41 .- 1) / 2
+
+    rev_N_data=reverse(perturbation_N, dims=1)
+    N_data_mat=vcat(rev_N_data, perturbation_N)
+    fft_coeff_N_data=zeros(size(N_data_mat))
+
+
+    rev_P_data=reverse(perturbation_P, dims=1)
+    P_data_mat=vcat(rev_P_data, perturbation_P)
+    fft_coeff_P_data=zeros(size(P_data_mat))
+
+
+    rev_Z_data=reverse(perturbation_Z, dims=1)
+    Z_data_mat=vcat(rev_Z_data, perturbation_Z)
+    fft_coeff_Z_data=zeros(size(Z_data_mat))
+
+    rev_D_data=reverse(perturbation_D, dims=1)
+    D_data_mat=vcat(rev_D_data, perturbation_D)
+    fft_coeff_D_data=zeros(size(D_data_mat))
+
+    for i in 1:size(P_data_mat)[2]
+        fft_coeff_P_data[:,i]=abs.( fft(P_data_mat[:,i]) )
+        fft_coeff_N_data[:,i]=abs.( fft(N_data_mat[:,i]) )
+        fft_coeff_Z_data[:,i]=abs.( fft(Z_data_mat[:,i]) )
+        fft_coeff_D_data[:,i]=abs.( fft(D_data_mat[:,i]) )
+    end
+    
+    yticks_values = 2:2:40
+    N_plot=heatmap(times, mode_values, fft_coeff_N_data[2:41,:], xlabel="time", ylabel="Modes", title="Power of N", yticks=(yticks_values, string.(yticks_values)))
+    P_plot=heatmap(times, mode_values, fft_coeff_P_data[2:41,:], xlabel="time", ylabel="Modes", title="Power of P", yticks=(yticks_values, string.(yticks_values)))
+    Z_plot=heatmap(times, mode_values, fft_coeff_Z_data[2:41,:], xlabel="time", ylabel="Modes", title="Power of Z", yticks=(yticks_values, string.(yticks_values)))
+    D_plot=heatmap(times, mode_values, fft_coeff_D_data[2:41,:], xlabel="time", ylabel="Modes", title="Power of D", yticks=(yticks_values, string.(yticks_values)))
+
+    plot(N_plot, P_plot, Z_plot, D_plot, layout=(1,4),size=(2200, 600))
 
 end

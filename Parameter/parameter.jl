@@ -15,6 +15,7 @@ struct GlobalParameter
     λ::Float64
     ν::Float64
     δ::Float64
+    α::Float64
     g::Float64
     m::Float64
 end
@@ -23,6 +24,7 @@ struct DiffusionParameter
     d₁::Float64
     d₂::Float64
     d₃::Float64
+    d₄::Float64
 end
 
 struct WaveNumber
@@ -40,9 +42,9 @@ end
 
 
 ## Define the set of the global parameters:
-global_parameter_1 = GlobalParameter(0.1:0.1:2, 0.017, 5.9, 0.17, 7, 1/2)
+global_parameter_1 = GlobalParameter(0.1:0.1:2, 0.017, 5.9, 0.17, 1000, 7, 1/2)
 
-global_parameter_2 = GlobalParameter(1.75:0.05:3, 0.85, 2, 1, 2, 1/2)
+global_parameter_2 = GlobalParameter(1.75:0.05:3, 0.85, 2, 1, 1000, 2, 1/2)
 
 
 
