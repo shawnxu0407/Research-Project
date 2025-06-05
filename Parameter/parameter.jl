@@ -42,9 +42,9 @@ end
 
 
 ## Define the set of the global parameters:
-global_parameter_1 = GlobalParameter(0.1:0.1:2, 0.017, 5.9, 0.17, 1000, 7, 1/2)
+global_parameter_1 = GlobalParameter(0.1:0.1:2, 0.017, 5.9, 0.17, 1, 7, 1/2)
 
-global_parameter_2 = GlobalParameter(1.75:0.05:3, 0.85, 2, 1, 1000, 2, 1/2)
+global_parameter_2 = GlobalParameter(1.75:0.05:3, 0.85, 2, 1, 1, 2, 1/2)
 
 
 
