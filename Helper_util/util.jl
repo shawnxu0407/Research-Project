@@ -15,6 +15,7 @@ using FFTW
 using Polynomials: fit
 using MeshGrid
 using Peaks
+using Roots
 
 ```
 This First chunk of until functions are for the 2D system simulation
@@ -49,13 +50,12 @@ function equilibrium_state_2D(N_t,λ,ν)
    return(N̄,P̄)
 end
 
-
 ## ODE_PDE_system returns a list with 1st and 2nd column denotes the maximum real part of eigenvalue of ODE and PDE 
 ## 3rd column of their corresponding N_t position
 ## 4th column returns the eigen_vector with the eigenvalue of the maximum real part
 
 
-function ODE_PDE_system_2D(Nₜ,λ,ν,d₁,d₂,k)
+function ODE_PDE_system_2D(Nₜ,λ,ν,m,d₁,d₂,k)
     N̄,P̄=equilibrium_state_2D(Nₜ,λ,ν)
     result=[]
     for i in 1:length(Nₜ)
@@ -65,8 +65,8 @@ function ODE_PDE_system_2D(Nₜ,λ,ν,d₁,d₂,k)
         else
            ## Define the Jacobian matrix at equilibrium states
            A=zeros(2,2)
-           A=[-ν*Pᵢ/((1+Nᵢ)^2)   -1/2*λ*Pᵢ^(-1/2)
-               ν*Pᵢ/((1+Nᵢ)^2)   1/2*λ*Pᵢ^(-1/2)]
+           A=[-ν*Pᵢ/((1+Nᵢ)^2)   (m-1)*λ*Pᵢ^(m-1)
+               ν*Pᵢ/((1+Nᵢ)^2)   -(m-1)*λ*Pᵢ^(m-1)]
            ## define the linear approximation matrix for PDE system
            diffusion_vec=[d₁,d₂]
            diffusion_mat=diagm(0 => -(k^2)*diffusion_vec)
@@ -127,25 +127,43 @@ end
 
 ## key_variable_outcome takes the specific file_writer to returns the actual numeric of N, P, Space and time array
 ## with time_lim, we can output any N and P data corresponding to this time_limit
-function key_variable_outcome(time_lim,mymodel,file_name)
-    space=Array(znodes(mymodel.tracers.N))
-    N_timeseries = FieldTimeSeries(file_name, "N")
-    P_timeseries = FieldTimeSeries(file_name, "P")
-    times=Array(N_timeseries.times)
-    N_data = parent(N_timeseries.data[:,:,1:size(space)[1],:])
-    P_data = parent(P_timeseries.data[:,:,1:size(space)[1],:])
-    N_data = dropdims(N_data, dims=(1, 2))
-    P_data = dropdims(P_data, dims=(1, 2))
+
+
+
+function heatmap_plot_2D(save_img_path, N_data, P_data, times, space)
+
+    # Determine the extent: [xmin, xmax, ymin, ymax]
+    extent_N = [minimum(times), maximum(times), minimum(space), maximum(space)]
+    extent_P = [minimum(times), maximum(times), minimum(space), maximum(space)]
+
+    fig, axs = subplots(1, 2, figsize=(15, 6), constrained_layout=true)
+
+    # Heatmap for N_data with actual axes
+    cax1 = axs[1].imshow(N_data, aspect="auto", cmap="inferno", extent=extent_N, origin="lower")
+    axs[1].set_title("N", fontsize=16)
+    axs[1].set_xlabel("Time", fontsize=14)
+    axs[1].set_ylabel("Space", fontsize=14)
+
+    cbar1 = fig.colorbar(cax1, ax=axs[1], shrink=0.8, aspect=20)
+    cbar1.ax.tick_params(labelsize=12)
+    cbar1.set_label("", fontsize=14)
+
+    # Heatmap for P_data with actual axes
+    cax2 = axs[2].imshow(P_data, aspect="auto", cmap="inferno", extent=extent_P, origin="lower")
+    axs[2].set_title("P", fontsize=16)
+    axs[2].set_xlabel("Time", fontsize=14)
+    axs[2].set_yticks([])  # No repeated y-axis ticks
+
+    # Colorbar
+    cbar2 = fig.colorbar(cax2, ax=axs[2], shrink=0.8, aspect=20)
+    cbar2.ax.tick_params(labelsize=12)
+    cbar2.set_label("", fontsize=14)
     
-    @assert time_lim < size(times)[1] "time_lim can not be larger than the simulated time"
-    times=times[times.<time_lim]
-    time_index=size(times)[1]
 
-    N_data=N_data[:, 1:time_index]
-    P_data=P_data[:, 1:time_index]
-
-    return N_data,P_data,times,space
+    # Save figure
+    PyPlot.savefig(save_img_path, dpi=300, bbox_inches="tight")
 end
+
 
 
 ## Animation of N
@@ -280,9 +298,11 @@ function experiment_growth_rate(file_name, N̄, P̄)
 end
     
     
-
 ## Heatmap for power of each mode
-function FFT_power(N_data, P_data, times)
+function FFT_power_2D(N_data, P_data, N̄, P̄, times)
+
+    perturbation_N = N_data .- N̄
+    perturbation_P = P_data .- P̄
     rev_N_data=reverse(N_data, dims=1)
     N_data_mat=vcat(rev_N_data, N_data)
     fft_coeff_N_data=zeros(size(N_data_mat))
@@ -294,16 +314,64 @@ function FFT_power(N_data, P_data, times)
     fft_coeff_P_data=zeros(size(P_data_mat))
 
     for i in 1:size(P_data_mat)[2]
-        fft_coeff_P_data[:,i]=abs.( fft(P_data_mat[:,i]) )/ mean(abs.(fft(P_data_mat[:, i])))
-        fft_coeff_N_data[:,i]=abs.( fft(N_data_mat[:,i]) )/mean(abs.(fft(N_data_mat[:, i])))
+        fft_coeff_P_data[:,i]=abs.( fft(P_data_mat[:,i]) )
+        fft_coeff_N_data[:,i]=abs.( fft(N_data_mat[:,i]) )
     end
     
-    yticks_values = 2:2:40
-    N_plot=heatmap(times, mode_values, sqrt.(fft_coeff_N_data[2:41,:]), xlabel="time", ylabel="Modes", title="Power of N",yticks=(yticks_values, string.(yticks_values)))
-    P_plot=heatmap(times, mode_values, sqrt.(fft_coeff_P_data[2:41,:]), xlabel="time", ylabel="Modes", title="Power of P",yticks=(yticks_values, string.(yticks_values)))
+        # === Prepare input for heatmap ===
+    mode_range = 2:41
+    mode_values = (mode_range .- 1) ./ 2
 
-    plot(N_plot, P_plot, layout=(1, 2),size=(1100, 450))
+    # Use your heatmap plotting function
+    heatmap_plot_2D("fft_modes_2D_k4_p1.png",
+        fft_coeff_N_data[mode_range, :],
+        fft_coeff_P_data[mode_range, :],
+        times,
+        mode_values)
+end
 
+
+function key_variable_outcome_2D(mymodel, file_name)
+    space=Array(znodes(mymodel.tracers.N))
+    N_timeseries = FieldTimeSeries(file_name, "N")
+    P_timeseries = FieldTimeSeries(file_name, "P")
+    times=Array(N_timeseries.times)
+
+    N_data = parent(N_timeseries.data[:,:,1:size(space)[1],:])
+    P_data = parent(P_timeseries.data[:,:,1:size(space)[1],:])
+    N_data = dropdims(N_data, dims=(1, 2))
+    P_data = dropdims(P_data, dims=(1, 2))
+    
+    time_index=size(times)[1]
+
+    N_data=N_data[:, 1:time_index]
+    P_data=P_data[:, 1:time_index]
+
+    return N_data,P_data,times,space
+end
+
+
+function plot_pde_eigenvalues_2D(Nₜ, λ, ν, m, d₁, d₂, k_range, xlim_range, ylim_range)
+    eigen_pde_values = []
+    
+    for k in k_range
+        result = ODE_PDE_system_2D(Nₜ, λ, ν, m, d₁, d₂, k)[1]
+        push!(eigen_pde_values, result[2])
+    end
+
+    # Plot max real part of PDE eigenvalue vs k
+    p = plot(
+        k_range,
+        eigen_pde_values,
+        xlabel = "k",
+        ylabel = "Max Re(λ)",
+        title = "Max Real Part of PDE Eigenvalues vs k",
+        lw = 2,
+        label = "Max Re(λ)",
+        ylim = ylim_range,
+        xlim = xlim_range
+    )
+    hline!([0], linestyle=:dash, color=:black, label="")
 end
 
 
@@ -354,7 +422,7 @@ end
 
 
 
-
+## Change -0.1 to NAN values
 
 function ODE_PDE_system_3D(Nₜ, λ, ν, δ, g, m, d₁, d₂, d₃, k)
     N̄,P̄,Z̄=equilibrium_state_3D(Nₜ, λ, ν, δ, g, m)
@@ -362,7 +430,7 @@ function ODE_PDE_system_3D(Nₜ, λ, ν, δ, g, m, d₁, d₂, d₃, k)
     for i in 1:length(Nₜ)
         Nᵢ,Pᵢ,Zᵢ=N̄[i],P̄[i],Z̄[i]
         if Nᵢ == -1 && Pᵢ==-1 && Zᵢ==-1
-           key=[-0.1,-0.1, Nₜ[i]]
+           key=[NaN, NaN, Nₜ[i]]
         else
            ## Define the Jacobian matrix at equilibrium states
            A=zeros(3,3)
@@ -632,11 +700,59 @@ function e_folding_time_3D(data_mat_N, data_mat_P, data_mat_Z, times, space, N̄
 end
 
 
+function heatmap_plot_3D(save_img_path, N_data, P_data, Z_data, times, space)
+    N_data_slice = N_data[:, 20:end]
+    P_data_slice = P_data[:, 20:end]
+    Z_data_slice = Z_data[:, 20:end]
 
+    # Also slice times accordingly since you're slicing columns (assuming columns correspond to time)
+    times_slice = times[20:end]
+
+    # Determine extent with sliced data
+    extent_N = [minimum(times_slice), maximum(times_slice), minimum(space), maximum(space)]
+    extent_P = [minimum(times_slice), maximum(times_slice), minimum(space), maximum(space)]
+    extent_Z = [minimum(times_slice), maximum(times_slice), minimum(space), maximum(space)]
+
+    fig, axs = subplots(1, 3, figsize=(15, 6), constrained_layout=true)
+
+    # Heatmap for N_data with actual axes
+    cax1 = axs[1].imshow(N_data_slice, aspect="auto", cmap="inferno", extent=extent_N, origin="lower")
+    axs[1].set_title("N", fontsize=16)
+    axs[1].set_xlabel("Time", fontsize=14)
+    axs[1].set_ylabel("Space", fontsize=14)
+
+    cbar1 = fig.colorbar(cax1, ax=axs[1], shrink=0.8, aspect=20)
+    cbar1.ax.tick_params(labelsize=12)
+    cbar1.set_label("", fontsize=14)
+
+    # Heatmap for P_data with actual axes
+    cax2 = axs[2].imshow(P_data_slice, aspect="auto", cmap="inferno", extent=extent_P, origin="lower")
+    axs[2].set_title("P", fontsize=16)
+    axs[2].set_xlabel("Time", fontsize=14)
+    axs[2].set_yticks([])  # No repeated y-axis ticks
+
+    # Colorbar
+    cbar2 = fig.colorbar(cax2, ax=axs[2], shrink=0.8, aspect=20)
+    cbar2.ax.tick_params(labelsize=12)
+    cbar2.set_label("", fontsize=14)
+
+    # Heatmap for P_data with actual axes
+    cax3 = axs[3].imshow(Z_data_slice, aspect="auto", cmap="inferno", extent=extent_Z, origin="lower")
+    axs[3].set_title("Z", fontsize=16)
+    axs[3].set_xlabel("Time", fontsize=14)
+    axs[3].set_yticks([])  # No repeated y-axis ticks
+
+    # Colorbar
+    cbar3 = fig.colorbar(cax3, ax=axs[3], shrink=0.8, aspect=20)
+    cbar3.ax.tick_params(labelsize=12)
+    cbar3.set_label("", fontsize=14)
+
+    # Save figure
+    PyPlot.savefig(save_img_path, dpi=300, bbox_inches="tight")
+end
 
 ## Heatmap for power of each mode
-function FFT_power_3D(N_data, P_data, Z_data, N̄, P̄, Z̄, times)
-
+function FFT_power_3D(save_path, N_data, P_data, Z_data, N̄, P̄, Z̄, times)
     perturbation_N = N_data .- N̄
     perturbation_P = P_data .- P̄
     perturbation_Z = Z_data .- Z̄
@@ -662,16 +778,85 @@ function FFT_power_3D(N_data, P_data, Z_data, N̄, P̄, Z̄, times)
         fft_coeff_N_data[:,i]=abs.( fft(N_data_mat[:,i]) )
         fft_coeff_Z_data[:,i]=abs.( fft(Z_data_mat[:,i]) )
     end
-    
-    yticks_values = 2:2:40
-    N_plot=heatmap(times, mode_values, fft_coeff_N_data[2:41,:], xlabel="time", ylabel="Modes", title="Power of N", yticks=(yticks_values, string.(yticks_values)))
-    P_plot=heatmap(times, mode_values, fft_coeff_P_data[2:41,:], xlabel="time", ylabel="Modes", title="Power of P", yticks=(yticks_values, string.(yticks_values)))
-    Z_plot=heatmap(times, mode_values, fft_coeff_Z_data[2:41,:], xlabel="time", ylabel="Modes", title="Power of Z", yticks=(yticks_values, string.(yticks_values)))
 
-    plot(N_plot, P_plot, Z_plot, layout=(1,3),size=(1800, 600))
+    mode_range = 2:41
+    mode_values = (mode_range .- 1) ./ 2
+
+    # Use your heatmap plotting function
+    heatmap_plot_3D(save_path,
+        fft_coeff_N_data[mode_range, :],
+        fft_coeff_P_data[mode_range, :],
+        fft_coeff_Z_data[mode_range, :],
+        times,
+        mode_values)
 
 end
 
+
+function experiment_growth_rate_3D(file_name,total_population, I₁, I₂, I₃, λ, ν, δ, g, m, d₁, d₂, d₃, k)
+    ds = NCDataset(file_name, "r")
+    times = ds["time"][:]
+
+    ## Denote the perturbation for N and P from the equilibrium state
+    N′ = ds["perturbation_N"]
+    P′ = ds["perturbation_P"]
+    Z′ = ds["perturbation_Z"]
+    time_increment=170/size(times)[1]
+
+    
+
+    Interval_1=Int(round(I₁[1]/time_increment)):Int(round(I₁[size(I₁)[1]]/time_increment))
+    Interval_2=Int(round(I₂[1]/time_increment)):Int(round(I₂[size(I₂)[1]]/time_increment))
+    Interval_3=Int(round(I₃[1]/time_increment)):Int(round(I₃[size(I₃)[1]]/time_increment))
+
+
+    target_N=N′[Interval_1]
+    N_peaks=findmaxima(target_N)
+    target_P=P′[Interval_2]
+    P_peaks=findmaxima(target_P)
+    target_Z=Z′[Interval_3]
+    Z_peaks=findmaxima(target_Z)
+    
+    degree = 1
+
+    ## Fit the log of growth with line on time range I for N,P
+    
+    linear_fit_N = fit(times[Interval_1][N_peaks.indices], log.(N′[Interval_1][N_peaks.indices]), degree, var = :t)
+    best_fit_N = @. exp(linear_fit_N[0] + linear_fit_N[1] * times)
+    
+    linear_fit_P = fit(times[Interval_2][P_peaks.indices], log.(P′[Interval_2][P_peaks.indices]), degree, var = :t)
+    best_fit_P = @. exp(linear_fit_P[0] + linear_fit_P[1] * times)
+
+    linear_fit_Z = fit(times[Interval_3][Z_peaks.indices], log.(Z′[Interval_3][Z_peaks.indices]), degree, var = :t)
+    best_fit_Z = @. exp(linear_fit_Z[0] + linear_fit_Z[1] * times)
+
+
+
+    # ODE_PDE_system_3D(total_population, λ, ν, δ, g, m, d₁, d₂, d₃, k)[1][2]
+
+    print("Growth rate of N is approximately ", linear_fit_N[1]," with oscilation period ", 2*mean(diff(times[Interval_1][N_peaks.indices])) , "\n")
+    print("Growth rate of P is approximately ", linear_fit_P[1]," with oscilation period ", 2*mean(diff(times[Interval_2][P_peaks.indices])) , "\n")
+    print("Growth rate of Z is approximately ", linear_fit_Z[1]," with oscilation period ", 2*mean(diff(times[Interval_3][Z_peaks.indices])) , "\n")
+    print("Largest real part of e-value ", ODE_PDE_system_3D(total_population, λ, ν, δ, g, m, d₁, d₂, d₃, k)[1][2])
+
+    
+
+
+    plot(times, N′,label="norm(N′)", yscale = :log10, linestyle=:solid,
+    lw=4, xlabel="time", ylabel="norm",title="Norm of perturbations", legend=:bottomright)
+
+
+    plot!(times, P′,label="norm(P′)", linestyle=:solid, lw=4)#
+
+    plot!(times, Z′,label="norm(Z′)", linestyle=:solid, lw=4)#
+    
+    plot!(times[Interval_1], best_fit_N[Interval_1],label="N best fit", linestyle=:dash, lw=6)
+    
+    plot!(times[Interval_2], best_fit_P[Interval_2],label="P best fit", linestyle=:dash, lw=6)
+
+    plot!(times[Interval_3], best_fit_Z[Interval_3],label="Z best fit", linestyle=:dash, lw=6)
+
+end
 
 
 ```
@@ -923,7 +1108,7 @@ function experiment_growth_rate_4D(file_name,total_population, I₁, I₂, I₃,
     ϵ = 1e-10
 
     plot(times, N′,label="norm(N′)", yscale = :log10, linestyle=:solid,
-    lw=4, xlabel="time", ylabel="norm",title="Norm of perturbations", legend=:topleft)
+    lw=4, xlabel="time", ylabel="norm",title="Norm of perturbations", legend=:bottomright)
 
 
     plot!(times, P′,label="norm(P′)", linestyle=:solid, lw=4)#
