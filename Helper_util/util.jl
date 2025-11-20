@@ -1119,7 +1119,7 @@ function plot_pde_eigenvalues_4D(Nₜ, λ, ν, δ, α, g, m, d₁, d₂, d₃, d
     end
 
     # Plot max real part of PDE eigenvalue vs k
-    p = plot(
+    p = Plots.plot(
         k_range,
         eigen_pde_values,
         xlabel = "k",
