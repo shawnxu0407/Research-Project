@@ -16,6 +16,8 @@ using Polynomials: fit
 using MeshGrid
 using Peaks
 using Roots
+using PyPlot
+using Colors
 
 ```
 This First chunk of until functions are for the 2D system simulation
@@ -129,40 +131,48 @@ end
 ## with time_lim, we can output any N and P data corresponding to this time_limit
 
 
-
+using PyCall
+@pyimport matplotlib.ticker as ticker
 function heatmap_plot_2D(save_img_path, N_data, P_data, times, space)
+    N_data_slice = N_data[:, 20:end]
+    P_data_slice = P_data[:, 20:end]
 
-    # Determine the extent: [xmin, xmax, ymin, ymax]
-    extent_N = [minimum(times), maximum(times), minimum(space), maximum(space)]
-    extent_P = [minimum(times), maximum(times), minimum(space), maximum(space)]
+    # Also slice times accordingly since you're slicing columns (assuming columns correspond to time)
+    times_slice = times[20:end]
 
-    fig, axs = subplots(1, 2, figsize=(15, 6), constrained_layout=true)
+    # Determine extent with sliced data
+    extent_N = [minimum(times_slice), maximum(times_slice), minimum(space), maximum(space)]
+    extent_P = [minimum(times_slice), maximum(times_slice), minimum(space), maximum(space)]
+
+    fig, axs = subplots(1, 2, figsize=(20, 12), constrained_layout=true)
 
     # Heatmap for N_data with actual axes
-    cax1 = axs[1].imshow(N_data, aspect="auto", cmap="inferno", extent=extent_N, origin="lower")
+    cax1 = axs[1].imshow(N_data_slice, aspect="auto", cmap="inferno", extent=extent_N, origin="lower")
     axs[1].set_title("N", fontsize=16)
     axs[1].set_xlabel("Time", fontsize=14)
-    axs[1].set_ylabel("Space", fontsize=14)
+    axs[1].set_ylabel("Modes", fontsize=14)
 
     cbar1 = fig.colorbar(cax1, ax=axs[1], shrink=0.8, aspect=20)
     cbar1.ax.tick_params(labelsize=12)
     cbar1.set_label("", fontsize=14)
 
+
     # Heatmap for P_data with actual axes
-    cax2 = axs[2].imshow(P_data, aspect="auto", cmap="inferno", extent=extent_P, origin="lower")
+    cax2 = axs[2].imshow(P_data_slice, aspect="auto", cmap="inferno", extent=extent_P, origin="lower")
     axs[2].set_title("P", fontsize=16)
     axs[2].set_xlabel("Time", fontsize=14)
-    axs[2].set_yticks([])  # No repeated y-axis ticks
+
+    
 
     # Colorbar
     cbar2 = fig.colorbar(cax2, ax=axs[2], shrink=0.8, aspect=20)
     cbar2.ax.tick_params(labelsize=12)
     cbar2.set_label("", fontsize=14)
-    
 
     # Save figure
     PyPlot.savefig(save_img_path, dpi=300, bbox_inches="tight")
 end
+
 
 
 
@@ -259,35 +269,37 @@ function e_folding_time(data_mat_N,data_mat_P,times,space,N_star,P_star)
     return e_folding_N,e_folding_P,myplot_N,myplot_P
 end
 
-
-## Calculate the Growth rate depending on our simulation
-function experiment_growth_rate(file_name, N̄, P̄)
+function experiment_growth_rate_2D(file_name, N̄, P̄, I₁, I₂)
     ds = NCDataset(file_name, "r")
     times = ds["time"][:]
 
     ## Denote the perturbation for N and P from the equilibrium state
     N′ = ds["perturbation_N"]
     P′ = ds["perturbation_P"]
-    I = 2000:4000
+    time_increment=170/size(times)[1]
+
+    
+
+    Interval_1=Int(round(I₁[1]/time_increment)):Int(round(I₁[size(I₁)[1]]/time_increment))
+    Interval_2=Int(round(I₂[1]/time_increment)):Int(round(I₂[size(I₂)[1]]/time_increment))
     
     degree = 1
 
     ## Fit the log of growth with line on time range I for N,P
     
-    linear_fit_N = fit(times[I], log.(N′[I]), degree, var = :t)
+    linear_fit_N = fit(times[Interval_1], log.(N′[Interval_1]), degree, var = :t)
     best_fit_N = @. exp(linear_fit_N[0] + linear_fit_N[1] * times)
     
-    linear_fit_P = fit(times[I], log.(P′[I]), degree, var = :t)
+    linear_fit_P = fit(times[Interval_2], log.(P′[Interval_2]), degree, var = :t)
     best_fit_P = @. exp(linear_fit_P[0] + linear_fit_P[1] * times)
 
     print("Growth rate of N is approximately ", linear_fit_N[1], "\n")
     print("Growth rate of P is approximately ", linear_fit_P[1], "\n")
-    print("Largest real part of e-value", find_largest_eigenvalue(1e-4,3,N̄,P̄))
-    print("Largest real part of e-value", find_largest_eigenvalue(1e-4,5,N̄,P̄))
+    print("Largest real part of e-value ", ODE_PDE_system_2D(total_population,λ,ν,m,d₁,d₂,k)[1][2])
 
 
     plot(times, N′,label="norm(N′)", yscale = :log10, linestyle=:solid,
-    lw=4, xlabel="time", ylabel="norm",title="Norm of perturbations", legend=:topleft)
+    lw=4, xlabel="time", ylabel="norm",title="Norm of perturbations", legend=:left)
 
     plot!(times, P′,label="norm(P′)", linestyle=:solid, lw=4)#
     
@@ -297,37 +309,37 @@ function experiment_growth_rate(file_name, N̄, P̄)
 
 end
     
-    
 ## Heatmap for power of each mode
-function FFT_power_2D(N_data, P_data, N̄, P̄, times)
-
+function FFT_power_2D(save_path, N_data, P_data, N̄, P̄, times)
     perturbation_N = N_data .- N̄
     perturbation_P = P_data .- P̄
-    rev_N_data=reverse(N_data, dims=1)
-    N_data_mat=vcat(rev_N_data, N_data)
-    fft_coeff_N_data=zeros(size(N_data_mat))
 
     mode_values = (1:41 .- 1) / 2
 
-    rev_P_data=reverse(P_data, dims=1)
-    P_data_mat=vcat(rev_P_data, P_data)
+    rev_N_data=reverse(perturbation_N, dims=1)
+    N_data_mat=vcat(rev_N_data, perturbation_N)
+    fft_coeff_N_data=zeros(size(N_data_mat))
+
+
+    rev_P_data=reverse(perturbation_P, dims=1)
+    P_data_mat=vcat(rev_P_data, perturbation_P)
     fft_coeff_P_data=zeros(size(P_data_mat))
 
     for i in 1:size(P_data_mat)[2]
         fft_coeff_P_data[:,i]=abs.( fft(P_data_mat[:,i]) )
         fft_coeff_N_data[:,i]=abs.( fft(N_data_mat[:,i]) )
     end
-    
-        # === Prepare input for heatmap ===
-    mode_range = 2:41
+
+    mode_range = 2:21
     mode_values = (mode_range .- 1) ./ 2
 
     # Use your heatmap plotting function
-    heatmap_plot_2D("fft_modes_2D_k4_p1.png",
+    heatmap_plot_2D(save_path,
         fft_coeff_N_data[mode_range, :],
         fft_coeff_P_data[mode_range, :],
         times,
         mode_values)
+
 end
 
 
@@ -350,31 +362,83 @@ function key_variable_outcome_2D(mymodel, file_name)
     return N_data,P_data,times,space
 end
 
-
-function plot_pde_eigenvalues_2D(Nₜ, λ, ν, m, d₁, d₂, k_range, xlim_range, ylim_range)
-    eigen_pde_values = []
+function plot_pde_eigenvalues_2D(Nₜ, λ, ν, m, d₁, d₂_values, k_range, xlim_range, ylim_range)
+    p = plot(xlabel="k", ylabel="Max Re(λ)",
+             title="m=0.5",
+             lw=2,
+             xlim=xlim_range,
+             ylim=ylim_range)
     
-    for k in k_range
-        result = ODE_PDE_system_2D(Nₜ, λ, ν, m, d₁, d₂, k)[1]
-        push!(eigen_pde_values, result[2])
+    # Loop over different d₂ values
+    for d₂ in d₂_values
+        eigen_pde_values = []
+        for k in k_range
+            result = ODE_PDE_system_2D(Nₜ, λ, ν, m, d₁, d₂, k)[1]
+            push!(eigen_pde_values, result[2])
+        end
+        # Add line to the plot for current d₂
+        plot!(p, k_range, eigen_pde_values, label="d₂ = $d₂",lw=2)
     end
 
-    # Plot max real part of PDE eigenvalue vs k
-    p = plot(
-        k_range,
-        eigen_pde_values,
-        xlabel = "k",
-        ylabel = "Max Re(λ)",
-        title = "Max Real Part of PDE Eigenvalues vs k",
-        lw = 2,
-        label = "Max Re(λ)",
-        ylim = ylim_range,
-        xlim = xlim_range
-    )
-    hline!([0], linestyle=:dash, color=:black, label="")
+    # Add horizontal line at 0
+    hline!(p, [0], linestyle=:dash, color=:black, label="")
+
+    return p
 end
 
 
+
+function plot_PDE_heatmaps_2D(ODE_PDE_system_2D, λ, ν, m, d₁, k_values;
+                           Nₜ_range=0.1:0.01:1, d₂_range=0:0.0001:0.004,
+                           cmap="bwr", n_xticks=5, n_yticks=5,
+                           output_file="multi_heatmap_PDE_eigen.png")
+
+    Nₜ = collect(Nₜ_range)
+    d₂_vec = collect(d₂_range)
+    
+
+    fig, axes = subplots(2, 2, figsize=(10, 8))
+    fig.patch.set_facecolor("white")
+
+    for (idx, k) in enumerate(k_values)
+        row = div(idx - 1, 2) + 1
+        col = (idx - 1) % 2 + 1
+        ax = axes[row, col]
+
+        PDE_eigen = zeros(Float64, length(d₂_vec), length(Nₜ))
+        for i in eachindex(d₂_vec)
+            results = ODE_PDE_system_2D(Nₜ, λ, ν, m, d₁, d₂_vec[i], k)
+            for j in eachindex(Nₜ)
+                _, PDE_eigen[i, j], _ = results[j]
+            end
+        end
+
+        # Diverging colormap centered at 0
+        vmax = maximum(abs, PDE_eigen)
+        c = ax.imshow(PDE_eigen,
+                      extent=[minimum(Nₜ), maximum(Nₜ), minimum(d₂_vec), maximum(d₂_vec)],
+                      aspect="auto", origin="lower",
+                      cmap=cmap,
+                      vmin=-vmax, vmax=vmax)  # center colormap at 0
+
+        # Draw zero contour
+        cs=ax.contour(Nₜ, d₂_vec, PDE_eigen, levels=[0.0], colors="black", linewidths=1.5)
+        ax.clabel(cs, inline=true, fontsize=10, fmt="0")   # label on contour
+
+        ax.set_title("k = $k")
+        ax.set_xlabel(L"N_{T}")
+        ax.set_ylabel(L"d_{2}")
+        ax.tick_params(direction="out")
+        ax.set_xticks(range(minimum(Nₜ), stop=maximum(Nₜ), length=n_xticks))
+        ax.set_yticks(range(minimum(d₂_vec), stop=maximum(d₂_vec), length=n_yticks))
+
+        fig.colorbar(c, ax=ax)
+    end
+
+    tight_layout()
+    PyPlot.savefig(output_file, dpi=300, facecolor=fig.get_facecolor())
+    close(fig)
+end
 
 
 
@@ -522,6 +586,111 @@ function conservation_plot_3D(N_data,P_data,Z_data,times,space)
     plot(times, total_con_vector, xlabel="Time", ylabel="sum con over time", title="total concentration over time",ylim=(255,260),label="total population")
 end
 
+function plot_eigenvalue_heatmap_3D(save_path, Nₜ, λ, ν, δ, g, d₁, d₂, d₃, m_range, k_range; cmap="coolwarm")
+    heatmap_data = zeros(length(m_range), length(k_range))
+
+    for (i, m) in enumerate(m_range)
+        for (j, k) in enumerate(k_range)
+            result = ODE_PDE_system_3D(Nₜ, λ, ν, δ, g, m, d₁, d₂, d₃, k)[1]
+            heatmap_data[i, j] = real(result[2])
+        end
+    end
+
+    fig, ax = subplots()
+
+    # automatic symmetric scaling
+    vmax = maximum(abs, heatmap_data)
+    c = ax.imshow(
+        heatmap_data,
+        extent=[minimum(k_range), maximum(k_range),
+                minimum(m_range), maximum(m_range)],
+        aspect="auto", origin="lower",
+        cmap=cmap,
+        vmin=-vmax, vmax=vmax
+    )
+
+    
+    cs = ax.contour(
+        k_range, m_range, heatmap_data,
+        levels=[0.0],
+        colors="black",
+        linewidths=1.6
+    )
+    ax.clabel(cs, inline=true, fontsize=10, fmt="0")   # label on contour
+
+    ax.set_xlabel("k")
+    ax.set_ylabel("m")
+    ax.tick_params(direction="out")
+    ax.set_xticks(range(minimum(k_range), stop=maximum(k_range), length=5))
+    ax.set_yticks(range(minimum(m_range), stop=maximum(m_range), length=5))
+
+    fig.colorbar(c, ax=ax)
+
+    tight_layout()
+    PyPlot.savefig(save_path, dpi=300)
+end
+
+
+function plot_combined_heatmaps_3D(ODE_PDE_system_3D, k_values, Nₜ, λ, ν, δ, g, m, d₁_vec, d₂, d₃;
+                                   layout=(2,2), cmap="bwr", n_xticks=5, n_yticks=5,
+                                   output_file="3D_combined.png")
+
+    n_subplots = length(k_values)
+    nrows, ncols = layout
+    Nₜ=collect(Nₜ)
+    d₁_vec=collect(d₁_vec)
+
+
+    fig, axes = subplots(2, 2, figsize=(10, 8))
+    fig.patch.set_facecolor("white")
+
+
+    for (idx, k) in enumerate(k_values)
+        row = div(idx - 1, 2) + 1
+        col = (idx - 1) % 2 + 1
+        ax = axes[row, col]
+        # Initialize PDE eigenvalues matrix
+        PDE_eigen = zeros(Float64, length(d₁_vec), length(Nₜ))
+
+        # Compute eigenvalues
+        for i in 1:length(d₁_vec)
+            for j in 1:length(Nₜ)
+                _, PDE_eigen[i,j], _ = ODE_PDE_system_3D(Nₜ, λ, ν, δ, g, m, d₁_vec[i], d₂, d₃, k)[j]
+            end
+        end
+
+        
+        # Diverging colormap centered at 0
+        vmax = maximum(abs, PDE_eigen)
+        c = ax.imshow(PDE_eigen,
+                      extent=[minimum(Nₜ), maximum(Nₜ), minimum(d₁_vec), maximum(d₁_vec)],
+                      aspect="auto", origin="lower",
+                      cmap=cmap,
+                      vmin=-vmax, vmax=vmax)  # center colormap at 0
+
+        # Draw zero contour
+        cs=ax.contour(Nₜ, d₁_vec, PDE_eigen, levels=[0.0], colors="black", linewidths=1.5)
+        ax.clabel(cs, inline=true, fontsize=10, fmt="0")   # label on contour
+
+        ax.set_title("k = $k")
+        ax.set_xlabel(L"N_{T}")
+        ax.set_ylabel(L"d_{1}")
+        ax.tick_params(direction="out")
+        ax.set_xticks(range(minimum(Nₜ), stop=maximum(Nₜ), length=n_xticks))
+        ax.set_yticks(range(minimum(d₁_vec), stop=maximum(d₁_vec), length=n_yticks))
+
+        fig.colorbar(c, ax=ax)
+    end
+
+    # Turn off unused axes
+
+    tight_layout()
+    PyPlot.savefig(output_file, dpi=300, facecolor=fig[:get_facecolor]())
+    close(fig)
+    println("Saved combined 3D heatmap to $output_file")
+end
+
+
 
 function experiment_growth_rate_3D(file_name,total_population, I₁, I₂, I₃, λ, ν, δ, g, m, d₁, d₂, d₃, k)
     ds = NCDataset(file_name, "r")
@@ -602,7 +771,7 @@ function plot_pde_eigenvalues_3D(Nₜ, λ, ν, δ, g, m, d₁, d₂, d₃, k_ran
         eigen_pde_values,
         xlabel = "k",
         ylabel = "Max Re(λ)",
-        title = "Max Real Part of PDE Eigenvalues vs k",
+        title = "m=0.5",
         lw = 2,
         label = "Max Re(λ)",
         ylim = ylim_range,
@@ -699,7 +868,6 @@ function e_folding_time_3D(data_mat_N, data_mat_P, data_mat_Z, times, space, N̄
     return e_folding_N,e_folding_P,e_folding_Z,myplot_N,myplot_P,myplot_Z
 end
 
-
 function heatmap_plot_3D(save_img_path, N_data, P_data, Z_data, times, space)
     N_data_slice = N_data[:, 20:end]
     P_data_slice = P_data[:, 20:end]
@@ -729,7 +897,6 @@ function heatmap_plot_3D(save_img_path, N_data, P_data, Z_data, times, space)
     cax2 = axs[2].imshow(P_data_slice, aspect="auto", cmap="inferno", extent=extent_P, origin="lower")
     axs[2].set_title("P", fontsize=16)
     axs[2].set_xlabel("Time", fontsize=14)
-    axs[2].set_yticks([])  # No repeated y-axis ticks
 
     # Colorbar
     cbar2 = fig.colorbar(cax2, ax=axs[2], shrink=0.8, aspect=20)
@@ -740,7 +907,6 @@ function heatmap_plot_3D(save_img_path, N_data, P_data, Z_data, times, space)
     cax3 = axs[3].imshow(Z_data_slice, aspect="auto", cmap="inferno", extent=extent_Z, origin="lower")
     axs[3].set_title("Z", fontsize=16)
     axs[3].set_xlabel("Time", fontsize=14)
-    axs[3].set_yticks([])  # No repeated y-axis ticks
 
     # Colorbar
     cbar3 = fig.colorbar(cax3, ax=axs[3], shrink=0.8, aspect=20)
@@ -791,8 +957,6 @@ function FFT_power_3D(save_path, N_data, P_data, Z_data, N̄, P̄, Z̄, times)
         mode_values)
 
 end
-
-
 function experiment_growth_rate_3D(file_name,total_population, I₁, I₂, I₃, λ, ν, δ, g, m, d₁, d₂, d₃, k)
     ds = NCDataset(file_name, "r")
     times = ds["time"][:]
@@ -843,7 +1007,7 @@ function experiment_growth_rate_3D(file_name,total_population, I₁, I₂, I₃,
 
 
     plot(times, N′,label="norm(N′)", yscale = :log10, linestyle=:solid,
-    lw=4, xlabel="time", ylabel="norm",title="Norm of perturbations", legend=:bottomright)
+    lw=4, xlabel="time", ylabel="norm",title="Norm of perturbations", legend=:topleft)
 
 
     plot!(times, P′,label="norm(P′)", linestyle=:solid, lw=4)#
@@ -857,7 +1021,6 @@ function experiment_growth_rate_3D(file_name,total_population, I₁, I₂, I₃,
     plot!(times[Interval_3], best_fit_Z[Interval_3],label="Z best fit", linestyle=:dash, lw=6)
 
 end
-
 
 ```
 untility functions of the 4-Species Model Here-----------------------------------
@@ -1049,6 +1212,138 @@ end
 
 
 
+
+
+function heatmap_plot_4D(save_img_path, N_data, P_data, Z_data, D_data, times, space)
+    idx = findall(t -> 1 ≤ t ≤ 169, times)
+
+    # Slice data and time accordingly
+    N_data_slice = N_data[:, idx]
+    P_data_slice = P_data[:, idx]
+    Z_data_slice = Z_data[:, idx]
+    D_data_slice = D_data[:, idx]
+    times_slice = times[idx]
+
+    # Define extent
+    extent = [minimum(times_slice), maximum(times_slice), minimum(space), maximum(space)]
+
+    fig, axs = PyPlot.subplots(2, 2, figsize=(12, 12), constrained_layout=true)
+
+    # helper function to format colorbars
+    function add_colorbar(cax, ax)
+        cbar = fig.colorbar(cax, ax=ax, shrink=0.8, aspect=20)
+        cbar.formatter.set_scientific(false)   # disable scientific notation
+        cbar.update_ticks()
+    end
+
+    # N heatmap
+    cax1 = axs[1].imshow(N_data_slice, aspect="auto", cmap="inferno",
+                         extent=extent, origin="lower")
+    axs[1].set_title("N", fontsize=16)
+    axs[1].set_xlabel("Time", fontsize=14)
+    add_colorbar(cax1, axs[1])
+
+    # P heatmap
+    cax2 = axs[2].imshow(P_data_slice, aspect="auto", cmap="inferno",
+                         extent=extent, origin="lower")
+    axs[2].set_title("P", fontsize=16)
+    axs[2].set_xlabel("Time", fontsize=14)
+    axs[2].set_yticks([])
+    add_colorbar(cax2, axs[2])
+
+    # Z heatmap
+    cax3 = axs[3].imshow(Z_data_slice, aspect="auto", cmap="inferno",
+                         extent=extent, origin="lower")
+    axs[3].set_title("Z", fontsize=16)
+    axs[3].set_xlabel("Time", fontsize=14)
+    add_colorbar(cax3, axs[3])
+
+    # D heatmap
+    cax4 = axs[4].imshow(D_data_slice, aspect="auto", cmap="inferno",
+                         extent=extent, origin="lower")
+    axs[4].set_title("D", fontsize=16)
+    axs[4].set_xlabel("Time", fontsize=14)
+    axs[4].set_yticks([])
+    add_colorbar(cax4, axs[4])
+
+    # Save figure
+    PyPlot.savefig(save_img_path, dpi=300, bbox_inches="tight")
+end
+
+## Heatmap for power of each mode
+function FFT_power_4D(save_path, N_data, P_data, Z_data, D_data, N̄, P̄, Z̄, D̄, times)
+    perturbation_N = N_data .- N̄
+    perturbation_P = P_data .- P̄
+    perturbation_Z = Z_data .- Z̄
+    perturbation_D = D_data .- D̄
+
+    mode_values = (1:41 .- 1) / 2
+
+    rev_N_data=reverse(perturbation_N, dims=1)
+    N_data_mat=vcat(rev_N_data, perturbation_N)
+    fft_coeff_N_data=zeros(size(N_data_mat))
+
+
+    rev_P_data=reverse(perturbation_P, dims=1)
+    P_data_mat=vcat(rev_P_data, perturbation_P)
+    fft_coeff_P_data=zeros(size(P_data_mat))
+
+
+    rev_Z_data=reverse(perturbation_Z, dims=1)
+    Z_data_mat=vcat(rev_Z_data, perturbation_Z)
+    fft_coeff_Z_data=zeros(size(Z_data_mat))
+
+    rev_D_data=reverse(perturbation_D, dims=1)
+    D_data_mat=vcat(rev_D_data, perturbation_D)
+    fft_coeff_D_data=zeros(size(D_data_mat))
+
+    for i in 1:size(P_data_mat)[2]
+        fft_coeff_P_data[:,i]=abs.( fft(P_data_mat[:,i]) )
+        fft_coeff_N_data[:,i]=abs.( fft(N_data_mat[:,i]) )
+        fft_coeff_Z_data[:,i]=abs.( fft(Z_data_mat[:,i]) )
+        fft_coeff_D_data[:,i]=abs.( fft(D_data_mat[:,i]) )
+    end
+
+    mode_range = 2:21
+    mode_values = (mode_range .- 1) ./ 2
+
+    # Use your heatmap plotting function
+    heatmap_plot_4D(save_path,
+        fft_coeff_N_data[mode_range, :],
+        fft_coeff_P_data[mode_range, :],
+        fft_coeff_Z_data[mode_range, :],
+        fft_coeff_D_data[mode_range, :],
+        times,
+        mode_values)
+
+end
+
+
+function plot_pde_eigenvalues_4D(Nₜ, λ, ν, δ, α, g, m, d₁_values, d₂, d₃, d₄, k_range, xlim_range, ylim_range)
+    p = plot(xlabel="k", ylabel="Max Re(λ)",
+             title="Max Real Part of PDE Eigenvalues vs k",
+             lw=2,
+             xlim=xlim_range,
+             ylim=ylim_range)
+    
+    # Loop over different d₂ values
+    for d₁ in d₁_values
+        eigen_pde_values = []
+        for k in k_range
+            result = ODE_PDE_system_4D(Nₜ, λ, ν, δ, α, g, m, d₁, d₂, d₃, d₄, k)[1]
+            push!(eigen_pde_values, result[2])
+        end
+        # Add line to the plot for current d₂
+        plot!(p, k_range, eigen_pde_values, label="d₁ = $d₁",lw=2)
+    end
+
+    # Add horizontal line at 0
+    hline!(p, [0], linestyle=:dash, color=:black, label="")
+
+    return p
+end
+
+
 function experiment_growth_rate_4D(file_name,total_population, I₁, I₂, I₃, I₄, λ, ν, δ, g, m, d₁, d₂, d₃, d₄, k)
     ds = NCDataset(file_name, "r")
     times = ds["time"][:]
@@ -1058,7 +1353,7 @@ function experiment_growth_rate_4D(file_name,total_population, I₁, I₂, I₃,
     P′ = ds["perturbation_P"]
     Z′ = ds["perturbation_Z"]
     D′ = ds["perturbation_D"]
-    time_increment=170/size(times)[1]
+    time_increment=1000/size(times)[1]
 
     
 
@@ -1107,68 +1402,124 @@ function experiment_growth_rate_4D(file_name,total_population, I₁, I₂, I₃,
     
     ϵ = 1e-10
 
-    plot(times, N′,label="norm(N′)", yscale = :log10, linestyle=:solid,
+    Plots.plot(times, N′,label="norm(N′)", yscale = :log10, linestyle=:solid,
     lw=4, xlabel="time", ylabel="norm",title="Norm of perturbations", legend=:bottomright)
 
 
-    plot!(times, P′,label="norm(P′)", linestyle=:solid, lw=4)#
+    Plots.plot!(times, P′,label="norm(P′)", linestyle=:solid, lw=4)#
 
-    plot!(times, Z′,label="norm(Z′)", linestyle=:solid, lw=4)#
+    Plots.plot!(times, Z′,label="norm(Z′)", linestyle=:solid, lw=4)#
 
-    plot!(times, D′.+ϵ,label="norm(D′)", linestyle=:solid, lw=4)#
+    Plots.plot!(times, D′.+ϵ,label="norm(D′)", linestyle=:solid, lw=4)#
     
-    plot!(times[Interval_1], best_fit_N[Interval_1],label="N best fit", linestyle=:dash, lw=6)
+    Plots.plot!(times[Interval_1], best_fit_N[Interval_1],label="N best fit", linestyle=:dash, lw=6)
     
-    plot!(times[Interval_2], best_fit_P[Interval_2],label="P best fit", linestyle=:dash, lw=6)
+    Plots.plot!(times[Interval_2], best_fit_P[Interval_2],label="P best fit", linestyle=:dash, lw=6)
 
-    plot!(times[Interval_3], best_fit_Z[Interval_3],label="Z best fit", linestyle=:dash, lw=6)
+    Plots.plot!(times[Interval_3], best_fit_Z[Interval_3],label="Z best fit", linestyle=:dash, lw=6)
 
-    plot!(times[Interval_4], best_fit_D[Interval_4].+ϵ,label="D best fit", linestyle=:dash, lw=6)
+    Plots.plot!(times[Interval_4], best_fit_D[Interval_4].+ϵ,label="D best fit", linestyle=:dash, lw=6)
 
 end
 
 
+function plot_eigenvalue_heatmap_4D(save_path, Nₜ, λ, ν, δ, α, g, d₁, d₂, d₃, d₄, m_range, k_range)
+    heatmap_data = zeros(length(m_range), length(k_range))
 
-function FFT_power_4D(N_data, P_data, Z_data, D_data, N̄, P̄, Z̄, D̄, times)
-
-    perturbation_N = N_data .- N̄
-    perturbation_P = P_data .- P̄
-    perturbation_Z = Z_data .- Z̄
-    perturbation_D = D_data .- D̄
-
-    mode_values = (1:41 .- 1) / 2
-
-    rev_N_data=reverse(perturbation_N, dims=1)
-    N_data_mat=vcat(rev_N_data, perturbation_N)
-    fft_coeff_N_data=zeros(size(N_data_mat))
-
-
-    rev_P_data=reverse(perturbation_P, dims=1)
-    P_data_mat=vcat(rev_P_data, perturbation_P)
-    fft_coeff_P_data=zeros(size(P_data_mat))
-
-
-    rev_Z_data=reverse(perturbation_Z, dims=1)
-    Z_data_mat=vcat(rev_Z_data, perturbation_Z)
-    fft_coeff_Z_data=zeros(size(Z_data_mat))
-
-    rev_D_data=reverse(perturbation_D, dims=1)
-    D_data_mat=vcat(rev_D_data, perturbation_D)
-    fft_coeff_D_data=zeros(size(D_data_mat))
-
-    for i in 1:size(P_data_mat)[2]
-        fft_coeff_P_data[:,i]=abs.( fft(P_data_mat[:,i]) )
-        fft_coeff_N_data[:,i]=abs.( fft(N_data_mat[:,i]) )
-        fft_coeff_Z_data[:,i]=abs.( fft(Z_data_mat[:,i]) )
-        fft_coeff_D_data[:,i]=abs.( fft(D_data_mat[:,i]) )
+    for (i, m) in enumerate(m_range)
+        for (j, k) in enumerate(k_range)
+            result = ODE_PDE_system_4D(Nₜ, λ, ν, δ, α, g, m, d₁, d₂, d₃, d₄, k)[1]
+            heatmap_data[i, j] = real(result[2])  # keep negative values
+        end
     end
+
+    fig, ax = subplots()
+
+    # Make the color scale symmetric around 0
+    vmax_abs = maximum(abs.(heatmap_data))
+
+    # Display heatmap
+    c = ax.imshow(
+        heatmap_data,
+        origin="lower",
+        aspect="auto",
+        extent=[minimum(k_range), maximum(k_range), minimum(m_range), maximum(m_range)],
+        cmap="coolwarm",      # diverging colormap
+        vmin=-vmax_abs,       # symmetric around 0
+        vmax=vmax_abs
+    )
+    cs = ax.contour(
+        k_range, m_range, heatmap_data,
+        levels=[0.0],
+        colors="black",
+        linewidths=1.6
+    )
+    ax.clabel(cs, inline=true, fontsize=10, fmt="0")   # label on contour
+
+
+
+    ax.set_xlabel("k")
+    ax.set_ylabel("m")
+    ax.tick_params(direction="out")
+    ax.set_xticks(range(minimum(k_range), stop=maximum(k_range), length=5))
+    ax.set_yticks(range(minimum(m_range), stop=maximum(m_range), length=5))
+
+    # Add colorbar
+    fig.colorbar(c, ax=ax)
+
+    tight_layout()
+    PyPlot.savefig(save_path, dpi=300)
+end
+
+
+function plot_combined_heatmaps_4D(k_values, Nₜ, λ, ν, δ, α, g, m, d₁_vec, d₂, d₃, d₄, ODE_PDE_system_4D; 
+                                layout=(2,2), cmap="bwr", n_xticks=5, n_yticks=5,
+                                output_file="combined.png")
+
+    Nₜ = collect(Nₜ)
+    d₁_vec = collect(d₁_vec)
     
-    yticks_values = 2:2:40
-    N_plot=heatmap(times, mode_values, fft_coeff_N_data[2:41,:], xlabel="time", ylabel="Modes", title="Power of N", yticks=(yticks_values, string.(yticks_values)))
-    P_plot=heatmap(times, mode_values, fft_coeff_P_data[2:41,:], xlabel="time", ylabel="Modes", title="Power of P", yticks=(yticks_values, string.(yticks_values)))
-    Z_plot=heatmap(times, mode_values, fft_coeff_Z_data[2:41,:], xlabel="time", ylabel="Modes", title="Power of Z", yticks=(yticks_values, string.(yticks_values)))
-    D_plot=heatmap(times, mode_values, fft_coeff_D_data[2:41,:], xlabel="time", ylabel="Modes", title="Power of D", yticks=(yticks_values, string.(yticks_values)))
 
-    plot(N_plot, P_plot, Z_plot, D_plot, layout=(1,4),size=(2200, 600))
+    fig, axes = subplots(2, 2, figsize=(10, 8))
+    fig.patch.set_facecolor("white")
 
+    for (idx, k) in enumerate(k_values)
+        row = div(idx - 1, 2) + 1
+        col = (idx - 1) % 2 + 1
+        ax = axes[row, col]
+
+        PDE_eigen = zeros(Float64, length(d₁_vec), length(Nₜ))
+        # Compute PDE eigenvalues
+        for i in 1:length(d₁_vec)
+            for j in 1:length(Nₜ)
+                _, PDE_eigen[i,j], _ = ODE_PDE_system_4D(Nₜ, λ, ν, δ, α, g, m, d₁_vec[i], d₂, d₃, d₄, k)[j]
+            end
+        end
+
+        # Diverging colormap centered at 0
+        vmax = maximum(abs, PDE_eigen)
+        c = ax.imshow(PDE_eigen,
+                      extent=[minimum(Nₜ), maximum(Nₜ), minimum(d₁_vec), maximum(d₁_vec)],
+                      aspect="auto", origin="lower",
+                      cmap=cmap,
+                      vmin=-vmax, vmax=vmax)  # center colormap at 0
+
+        # Draw zero contour
+        cs= ax.contour(Nₜ, d₁_vec, PDE_eigen, levels=[0.0], colors="black", linewidths=1.5)
+        
+        ax.clabel(cs, inline=true, fontsize=10, fmt="0")   # label on contour
+
+        ax.set_title("k = $k")
+        ax.set_xlabel(L"N_{T}")
+        ax.set_ylabel(L"d_{1}")
+        ax.tick_params(direction="out")
+        ax.set_xticks(range(minimum(Nₜ), stop=maximum(Nₜ), length=n_xticks))
+        ax.set_yticks(range(minimum(d₁_vec), stop=maximum(d₁_vec), length=n_yticks))
+
+        fig.colorbar(c, ax=ax)
+    end
+
+    tight_layout()
+    PyPlot.savefig(output_file, dpi=300, facecolor=fig.get_facecolor())
+    close(fig)
 end
